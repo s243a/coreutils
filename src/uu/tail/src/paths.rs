@@ -184,17 +184,9 @@ impl MetadataExtTail for Metadata {
         {
             self.ino().eq(&other.ino())
         }
-        #[cfg(windows)]
+        #[cfg(not(unix))]
         {
             // TODO: `file_index` requires unstable library feature `windows_by_handle`
-            // use std::os::windows::prelude::*;
-            // if let Some(self_id) = self.file_index() {
-            //     if let Some(other_id) = other.file_index() {
-            //     // TODO: not sure this is the equivalent of comparing inode numbers
-            //
-            //         return self_id.eq(&other_id);
-            //     }
-            // }
             false
         }
     }

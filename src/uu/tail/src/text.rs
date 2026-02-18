@@ -18,3 +18,5 @@ pub const BACKEND: &str = "inotify";
 pub const BACKEND: &str = "kqueue";
 #[cfg(target_os = "windows")]
 pub const BACKEND: &str = "ReadDirectoryChanges";
+#[cfg(target_family = "wasm")]
+pub const BACKEND: &str = "polling";

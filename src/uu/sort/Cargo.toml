@@ -46,8 +46,11 @@ uucore = { workspace = true, features = [
 fluent = { workspace = true }
 ahash = { workspace = true }
 
-[target.'cfg(not(target_os = "redox"))'.dependencies]
+[target.'cfg(all(not(target_os = "redox"), not(target_family = "wasm")))'.dependencies]
 ctrlc = { workspace = true }
+
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [target.'cfg(unix)'.dependencies]
 nix = { workspace = true, features = ["resource"] }

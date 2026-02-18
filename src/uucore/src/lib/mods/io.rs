@@ -14,7 +14,7 @@
 //! Even though they are distinct classes, they share common functionality.
 //! Access to this common functionality is provided in `OwnedFileDescriptorOrHandle`.
 
-#[cfg(not(windows))]
+#[cfg(unix)]
 use std::os::fd::{AsFd, OwnedFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsHandle, OwnedHandle};
@@ -27,8 +27,10 @@ use std::{
 
 #[cfg(windows)]
 type NativeType = OwnedHandle;
-#[cfg(not(windows))]
+#[cfg(unix)]
 type NativeType = OwnedFd;
+#[cfg(target_family = "wasm")]
+type NativeType = File;
 
 /// abstraction wrapper for native file handle / file descriptor
 pub struct OwnedFileDescriptorOrHandle {
@@ -60,11 +62,17 @@ impl OwnedFileDescriptorOrHandle {
     /// conversion from borrowed native type
     ///
     /// e.g. `std::io::stdout()`, `std::fs::File`, ...
-    #[cfg(not(windows))]
+    #[cfg(unix)]
     pub fn from<T: AsFd>(t: T) -> io::Result<Self> {
         Ok(Self {
             fx: t.as_fd().try_clone_to_owned()?,
         })
+    }
+
+    /// On WASM, fd cloning is not available. Accept File directly.
+    #[cfg(target_family = "wasm")]
+    pub fn from(f: File) -> io::Result<Self> {
+        Ok(Self { fx: f })
     }
 
     /// instantiates a corresponding `File`

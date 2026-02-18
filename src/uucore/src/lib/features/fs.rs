@@ -49,6 +49,7 @@ macro_rules! has {
 pub struct FileInformation(
     #[cfg(unix)] nix::sys::stat::FileStat,
     #[cfg(windows)] winapi_util::file::Information,
+    #[cfg(target_family = "wasm")] fs::Metadata,
 );
 
 impl FileInformation {
@@ -64,6 +65,15 @@ impl FileInformation {
     pub fn from_file(file: &impl AsHandleRef) -> IOResult<Self> {
         let info = winapi_util::file::information(file.as_handle_ref())?;
         Ok(Self(info))
+    }
+
+    /// Get information from a currently open file (WASM stub using metadata)
+    #[cfg(target_family = "wasm")]
+    pub fn from_file(_file: &impl std::io::Read) -> IOResult<Self> {
+        Err(Error::new(
+            ErrorKind::Unsupported,
+            "file metadata from open handle not supported on WASM",
+        ))
     }
 
     /// Get information for a given path.
@@ -95,6 +105,15 @@ impl FileInformation {
             let file = open_options.read(true).open(path.as_ref())?;
             Self::from_file(&file)
         }
+        #[cfg(target_family = "wasm")]
+        {
+            let md = if dereference {
+                fs::metadata(path.as_ref())
+            } else {
+                fs::symlink_metadata(path.as_ref())
+            };
+            Ok(Self(md?))
+        }
     }
 
     pub fn file_size(&self) -> u64 {
@@ -106,6 +125,10 @@ impl FileInformation {
         #[cfg(target_os = "windows")]
         {
             self.0.file_size()
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            self.0.len()
         }
     }
 
@@ -157,6 +180,8 @@ impl FileInformation {
         return self.0.st_nlink.try_into().unwrap();
         #[cfg(windows)]
         return self.0.number_of_links();
+        #[cfg(target_family = "wasm")]
+        return 1; // WASM has no hard link concept
     }
 
     #[cfg(unix)]
@@ -183,6 +208,14 @@ impl PartialEq for FileInformation {
     }
 }
 
+#[cfg(target_family = "wasm")]
+impl PartialEq for FileInformation {
+    fn eq(&self, _other: &Self) -> bool {
+        // WASM has no inode/device concepts; conservative: never equal
+        false
+    }
+}
+
 impl Eq for FileInformation {}
 
 impl Hash for FileInformation {
@@ -196,6 +229,11 @@ impl Hash for FileInformation {
         {
             self.0.volume_serial_number().hash(state);
             self.0.file_index().hash(state);
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            // No unique file identity on WASM; hash the file size as fallback
+            self.0.len().hash(state);
         }
     }
 }
@@ -717,6 +755,11 @@ pub fn path_ends_with_terminator(path: &Path) -> bool {
         .is_some_and(|wide| wide == b'/'.into() || wide == b'\\'.into())
 }
 
+#[cfg(target_family = "wasm")]
+pub fn path_ends_with_terminator(path: &Path) -> bool {
+    path.to_string_lossy().ends_with('/')
+}
+
 /// Checks if the standard input (stdin) is a directory.
 ///
 /// # Arguments
@@ -745,11 +788,17 @@ pub fn is_stdin_directory(stdin: &Stdin) -> bool {
         }
         false
     }
+
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = stdin;
+        false // stdin is never a directory on WASM
+    }
 }
 
 pub mod sane_blksize {
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     use std::os::unix::fs::MetadataExt;
     use std::{fs::metadata, path::Path};
 
@@ -776,12 +825,12 @@ pub mod sane_blksize {
         #[cfg(unix)] metadata: &std::fs::Metadata,
         #[cfg(not(unix))] _: &std::fs::Metadata,
     ) -> u64 {
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(unix)]
         {
             sane_blksize(metadata.blksize())
         }
 
-        #[cfg(target_os = "windows")]
+        #[cfg(any(target_os = "windows", target_family = "wasm"))]
         {
             DEFAULT
         }

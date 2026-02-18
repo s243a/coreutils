@@ -28,6 +28,9 @@ uucore = { workspace = true }
 fluent = { workspace = true }
 rustc-hash = { workspace = true }
 
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
 [[bin]]
 name = "shuf"
 path = "src/main.rs"

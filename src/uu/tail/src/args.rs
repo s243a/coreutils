@@ -447,6 +447,8 @@ pub fn uu_app() -> Command {
     let polling_help = translate!("tail-help-polling-unix");
     #[cfg(target_os = "windows")]
     let polling_help = translate!("tail-help-polling-windows");
+    #[cfg(target_family = "wasm")]
+    let polling_help = translate!("tail-help-polling-unix");
 
     Command::new(uucore::util_name())
         .version(uucore::crate_version!())

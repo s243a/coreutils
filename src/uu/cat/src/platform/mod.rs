@@ -9,8 +9,14 @@ pub use self::unix::is_unsafe_overwrite;
 #[cfg(windows)]
 pub use self::windows::is_unsafe_overwrite;
 
+#[cfg(target_family = "wasm")]
+pub use self::wasm::is_unsafe_overwrite;
+
 #[cfg(unix)]
 mod unix;
 
 #[cfg(windows)]
 mod windows;
+
+#[cfg(target_family = "wasm")]
+mod wasm;

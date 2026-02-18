@@ -26,6 +26,9 @@ num-bigint = { workspace = true }
 num-prime = { workspace = true }
 fluent = { workspace = true }
 
+[target.'cfg(target_family = "wasm")'.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
 [[bin]]
 name = "factor"
 path = "src/main.rs"
