@@ -115,6 +115,9 @@ pub use crate::features::utmpx;
 // ** windows-only
 #[cfg(all(windows, feature = "wide"))]
 pub use crate::features::wide;
+// ** wasm-only
+#[cfg(target_family = "wasm")]
+pub use crate::features::wasm_io;
 
 #[cfg(feature = "fsext")]
 pub use crate::features::fsext;
@@ -332,8 +335,18 @@ pub fn set_utility_is_second_arg() {
 // So if we want only the first arg or so it's overkill. We cache it.
 #[cfg(windows)]
 static ARGV: LazyLock<Vec<OsString>> = LazyLock::new(|| wild::args_os().collect());
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_family = "wasm")))]
 static ARGV: LazyLock<Vec<OsString>> = LazyLock::new(|| std::env::args_os().collect());
+// On WASM there are no real command-line args; provide a fallback to prevent panics.
+#[cfg(target_family = "wasm")]
+static ARGV: LazyLock<Vec<OsString>> = LazyLock::new(|| {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    if args.is_empty() {
+        vec![OsString::from("coreutils")]
+    } else {
+        args
+    }
+});
 
 static UTIL_NAME: LazyLock<String> = LazyLock::new(|| {
     let base_index = usize::from(get_utility_is_second_arg());

@@ -235,7 +235,7 @@ pub fn read<T: Read>(
 }
 
 /// Split `read` into `Line`s, and add them to `lines`.
-fn parse_lines<'a>(
+pub(crate) fn parse_lines<'a>(
     read: &'a [u8],
     lines: &mut Vec<Line<'a>>,
     line_data: &mut LineData<'a>,

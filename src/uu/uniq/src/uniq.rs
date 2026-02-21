@@ -9,7 +9,11 @@ use clap::{
 };
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write, stdin, stdout};
+use std::io::{BufRead, BufReader, BufWriter, Write};
+#[cfg(not(target_family = "wasm"))]
+use std::io::{stdin, stdout};
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::{stdin, stdout};
 use std::num::IntErrorKind;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UError, UResult, USimpleError};

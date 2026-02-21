@@ -7,7 +7,11 @@ use clap::builder::ValueParser;
 use clap::{Arg, ArgAction, Command};
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::io::{StdoutLock, Write, stdout};
+use std::io::Write;
+#[cfg(not(target_family = "wasm"))]
+use std::io::{StdoutLock, stdout};
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::{WasmStdoutLock as StdoutLock, stdout};
 use uucore::error::UResult;
 use uucore::format::{FormatChar, OctalParsing, parse_escape_only};
 use uucore::{format_usage, os_str_as_bytes};

@@ -4,7 +4,10 @@
 // file that was distributed with this source code.
 use clap::{Arg, ArgAction, Command};
 use std::ffi::OsString;
+#[cfg(not(target_family = "wasm"))]
 use std::io::stdout;
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::stdout;
 use std::ops::ControlFlow;
 use uucore::display::Quotable;
 use uucore::error::{UResult, UUsageError};

@@ -10,35 +10,127 @@
 //! The buffers for the individual chunks are recycled. There are two buffers.
 
 use std::cmp::Ordering;
+use std::io::Read;
+
+#[cfg(not(target_family = "wasm"))]
 use std::fs::File;
+#[cfg(not(target_family = "wasm"))]
 use std::io::Write;
+#[cfg(not(target_family = "wasm"))]
 use std::path::PathBuf;
-use std::{
-    io::Read,
-    sync::mpsc::{Receiver, SyncSender},
-    thread,
-};
+#[cfg(not(target_family = "wasm"))]
+use std::sync::mpsc::{Receiver, SyncSender};
+#[cfg(not(target_family = "wasm"))]
+use std::thread;
 
 use itertools::Itertools;
-use uucore::error::{UResult, strip_errno};
+use uucore::error::UResult;
+#[cfg(not(target_family = "wasm"))]
+use uucore::error::strip_errno;
 
 use crate::Output;
+#[cfg(not(target_family = "wasm"))]
 use crate::chunks::RecycledChunk;
+#[cfg(not(target_family = "wasm"))]
 use crate::merge::WriteableCompressedTmpFile;
+#[cfg(not(target_family = "wasm"))]
 use crate::merge::WriteablePlainTmpFile;
+#[cfg(not(target_family = "wasm"))]
 use crate::merge::WriteableTmpFile;
 use crate::tmp_dir::TmpDirWrapper;
 use crate::{
     GlobalSettings,
     chunks::{self, Chunk},
-    compare_by, merge, sort_by,
+    compare_by, sort_by,
 };
+#[cfg(not(target_family = "wasm"))]
+use crate::merge;
 use crate::{Line, print_sorted};
 
 // Note: update `test_sort::test_start_buffer` if this size is changed
+#[cfg(not(target_family = "wasm"))]
 const START_BUFFER_SIZE: usize = 8_000;
 
+/// WASM-specific sort: reads all input into memory, sorts synchronously, outputs result.
+/// No threads, no channels, no temp files (WASM doesn't support any of those).
+#[cfg(target_family = "wasm")]
+pub fn ext_sort(
+    files: &mut impl Iterator<Item = UResult<Box<dyn Read + Send>>>,
+    settings: &GlobalSettings,
+    output: Output,
+    _tmp_dir: &mut TmpDirWrapper,
+) -> UResult<()> {
+    let separator: u8 = settings.line_ending.into();
+
+    // Read all input into a single buffer
+    let mut all_data = Vec::new();
+    for file_result in files {
+        let mut file = file_result?;
+        let prev_len = all_data.len();
+        file.read_to_end(&mut all_data)?;
+        // Ensure separator between files if the previous file didn't end with one
+        if all_data.len() > prev_len && *all_data.last().unwrap() != separator {
+            all_data.push(separator);
+        }
+    }
+
+    if all_data.is_empty() {
+        return Ok(());
+    }
+
+    // Create a chunk from the buffer, parse lines, sort, and print
+    let chunk: UResult<Chunk> = Chunk::try_new(all_data, |buffer| {
+        let mut lines = Vec::new();
+        let mut line_data = chunks::LineData {
+            selections: Vec::new(),
+            num_infos: Vec::new(),
+            parsed_floats: Vec::new(),
+            line_num_floats: Vec::new(),
+        };
+        let mut token_buffer = Vec::new();
+        let mut line_count_hint = 0;
+        chunks::parse_lines(
+            buffer,
+            &mut lines,
+            &mut line_data,
+            &mut token_buffer,
+            &mut line_count_hint,
+            separator,
+            settings,
+        );
+        Ok(chunks::ChunkContents {
+            lines,
+            line_data,
+            token_buffer,
+            line_count_hint,
+        })
+    });
+    let mut chunk = chunk?;
+
+    // Sort in-place
+    chunk.with_dependent_mut(|_, contents| {
+        sort_by(&mut contents.lines, settings, &contents.line_data);
+    });
+
+    // Print sorted output
+    if settings.unique {
+        print_sorted(
+            chunk.lines().iter().dedup_by(|a, b| {
+                compare_by(a, b, settings, chunk.line_data(), chunk.line_data())
+                    == Ordering::Equal
+            }),
+            settings,
+            output,
+        )?;
+    } else {
+        print_sorted(chunk.lines().iter(), settings, output)?;
+    }
+
+    Ok(())
+}
+
 /// Sort files by using auxiliary files for storing intermediate chunks (if needed), and output the result.
+#[cfg(not(target_family = "wasm"))]
 pub fn ext_sort(
     files: &mut impl Iterator<Item = UResult<Box<dyn Read + Send>>>,
     settings: &GlobalSettings,
@@ -98,6 +190,7 @@ pub fn ext_sort(
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn reader_writer<
     F: Iterator<Item = UResult<Box<dyn Read + Send>>>,
     Tmp: WriteableTmpFile + 'static,
@@ -183,6 +276,7 @@ fn reader_writer<
 }
 
 /// The function that is executed on the sorter thread.
+#[cfg(not(target_family = "wasm"))]
 fn sorter(receiver: &Receiver<Chunk>, sender: &SyncSender<Chunk>, settings: &GlobalSettings) {
     while let Ok(mut payload) = receiver.recv() {
         payload.with_dependent_mut(|_, contents| {
@@ -197,6 +291,7 @@ fn sorter(receiver: &Receiver<Chunk>, sender: &SyncSender<Chunk>, settings: &Glo
 }
 
 /// Describes how we read the chunks from the input.
+#[cfg(not(target_family = "wasm"))]
 enum ReadResult<I: WriteableTmpFile> {
     /// The input was empty. Nothing was read.
     EmptyInput,
@@ -208,6 +303,7 @@ enum ReadResult<I: WriteableTmpFile> {
     WroteChunksToFile { tmp_files: Vec<I::Closed> },
 }
 /// The function that is executed on the reader/writer thread.
+#[cfg(not(target_family = "wasm"))]
 fn read_write_loop<I: WriteableTmpFile>(
     mut files: impl Iterator<Item = UResult<Box<dyn Read + Send>>>,
     tmp_dir: &mut TmpDirWrapper,
@@ -291,6 +387,7 @@ fn read_write_loop<I: WriteableTmpFile>(
 
 /// Write the lines in `chunk` to `file`, separated by `separator`.
 /// `compress_prog` is used to optionally compress file contents.
+#[cfg(not(target_family = "wasm"))]
 fn write<I: WriteableTmpFile>(
     chunk: &Chunk,
     file: (File, PathBuf),
@@ -302,6 +399,7 @@ fn write<I: WriteableTmpFile>(
     tmp_file.finished_writing()
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn write_lines<T: Write>(lines: &[Line], writer: &mut T, separator: u8) {
     for s in lines {
         writer.write_all(s.line).unwrap();

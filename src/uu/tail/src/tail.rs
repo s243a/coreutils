@@ -30,7 +30,11 @@ use paths::{FileExtTail, HeaderPrinter, Input, InputKind};
 use same_file::Handle;
 use std::cmp::Ordering;
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write, stdin, stdout};
+use std::io::{self, BufReader, BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
+#[cfg(not(target_family = "wasm"))]
+use std::io::{stdin, stdout};
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::{stdin, stdout};
 use std::path::{Path, PathBuf};
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError, set_exit_code};

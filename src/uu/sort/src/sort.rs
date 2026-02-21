@@ -33,7 +33,11 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{File, OpenOptions};
 use std::hash::{BuildHasher, Hash, Hasher};
-use std::io::{BufRead, BufReader, BufWriter, Read, Write, stdin, stdout};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+#[cfg(not(target_family = "wasm"))]
+use std::io::{stdin, stdout};
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::{stdin, stdout};
 use std::num::{IntErrorKind, NonZero};
 use std::ops::Range;
 #[cfg(unix)]
@@ -61,6 +65,21 @@ use uucore::{format_usage, i18n};
 
 use crate::buffer_hint::automatic_buffer_size;
 use crate::tmp_dir::TmpDirWrapper;
+
+/// Wrapper to add Send to Box<dyn Read> on WASM (single-threaded, Send is a no-op).
+#[cfg(target_family = "wasm")]
+struct WasmSendReader(Box<dyn Read>);
+
+#[cfg(target_family = "wasm")]
+// SAFETY: wasm32-unknown-unknown is single-threaded; Send is a no-op.
+unsafe impl Send for WasmSendReader {}
+
+#[cfg(target_family = "wasm")]
+impl Read for WasmSendReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
 
 mod options {
     pub mod modes {
@@ -2127,7 +2146,18 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
     let mut tmp_dir = TmpDirWrapper::new(
         matches
             .get_one::<String>(options::TMP_DIR)
-            .map_or_else(env::temp_dir, PathBuf::from),
+            .map_or_else(
+                || {
+                    // env::temp_dir() panics on wasm32-unknown-unknown.
+                    // Use "/tmp" as a fallback; the path is never actually created
+                    // unless external sorting is triggered (which requires filesystem I/O).
+                    #[cfg(target_family = "wasm")]
+                    { std::path::PathBuf::from("/tmp") }
+                    #[cfg(not(target_family = "wasm"))]
+                    { env::temp_dir() }
+                },
+                PathBuf::from,
+            ),
     );
 
     settings.compress_prog = matches
@@ -3039,6 +3069,21 @@ fn open(path: impl AsRef<OsStr>) -> UResult<Box<dyn Read + Send>> {
     }
 
     let path = Path::new(path);
+
+    // On WASM, use VFS file hooks instead of std::fs::File::open.
+    #[cfg(target_family = "wasm")]
+    {
+        return match uucore::wasm_io::open_file(path) {
+            Ok(reader) => Ok(Box::new(WasmSendReader(reader)) as Box<dyn Read + Send>),
+            Err(error) => Err(SortError::ReadFailed {
+                path: path.to_owned(),
+                error,
+            }
+            .into()),
+        };
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     match File::open(path) {
         Ok(f) => Ok(Box::new(f) as Box<dyn Read + Send>),
         Err(error) => Err(SortError::ReadFailed {
@@ -3058,6 +3103,21 @@ fn open_with_open_failed_error(path: impl AsRef<OsStr>) -> UResult<Box<dyn Read 
     }
 
     let path = Path::new(path);
+
+    // On WASM, use VFS file hooks instead of std::fs::File::open.
+    #[cfg(target_family = "wasm")]
+    {
+        return match uucore::wasm_io::open_file(path) {
+            Ok(reader) => Ok(Box::new(WasmSendReader(reader)) as Box<dyn Read + Send>),
+            Err(error) => Err(SortError::OpenFailed {
+                path: path.to_owned(),
+                error,
+            }
+            .into()),
+        };
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     match File::open(path) {
         Ok(f) => Ok(Box::new(f) as Box<dyn Read + Send>),
         Err(error) => Err(SortError::OpenFailed {

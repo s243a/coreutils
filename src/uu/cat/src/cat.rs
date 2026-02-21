@@ -18,6 +18,26 @@ use std::os::fd::AsFd;
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
 use thiserror::Error;
+
+#[cfg(target_family = "wasm")]
+fn stdout() -> uucore::wasm_io::WasmStdout {
+    uucore::wasm_io::stdout()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn stdout() -> std::io::Stdout {
+    std::io::stdout()
+}
+
+#[cfg(target_family = "wasm")]
+fn stdin() -> uucore::wasm_io::WasmStdin {
+    uucore::wasm_io::stdin()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn stdin() -> std::io::Stdin {
+    std::io::stdin()
+}
 use uucore::display::Quotable;
 use uucore::error::{UResult, strip_errno};
 use uucore::translate;
@@ -370,13 +390,14 @@ fn cat_handle<R: FdReadable>(
 fn cat_path(path: &OsString, options: &OutputOptions, state: &mut OutputState) -> CatResult<()> {
     match get_input_type(path)? {
         InputType::StdIn => {
-            let stdin = io::stdin();
-            if is_unsafe_overwrite(&stdin, &io::stdout()) {
+            let is_interactive = stdin().is_terminal();
+            let stdin = stdin();
+            if is_unsafe_overwrite(&stdin, &stdout()) {
                 return Err(CatError::OutputIsInput);
             }
             let mut handle = InputHandle {
                 reader: stdin,
-                is_interactive: io::stdin().is_terminal(),
+                is_interactive,
             };
             cat_handle(&mut handle, options, state)
         }
@@ -384,12 +405,9 @@ fn cat_path(path: &OsString, options: &OutputOptions, state: &mut OutputState) -
         #[cfg(unix)]
         InputType::Socket => Err(CatError::NoSuchDeviceOrAddress),
         _ => {
-            let file = File::open(path)?;
-            if is_unsafe_overwrite(&file, &io::stdout()) {
-                return Err(CatError::OutputIsInput);
-            }
+            let reader = uucore::wasm_io::open_file(path)?;
             let mut handle = InputHandle {
-                reader: file,
+                reader,
                 is_interactive: false,
             };
             cat_handle(&mut handle, options, state)
@@ -437,6 +455,15 @@ fn get_input_type(path: &OsString) -> CatResult<InputType> {
         return Ok(InputType::StdIn);
     }
 
+    // On WASM, check the VFS for file existence since std::fs::metadata fails.
+    // All VFS files are regular files.
+    #[cfg(target_family = "wasm")]
+    {
+        if uucore::wasm_io::file_exists(path) {
+            return Ok(InputType::File);
+        }
+    }
+
     let ft = match metadata(path) {
         Ok(md) => md.file_type(),
         Err(e) => {
@@ -475,7 +502,7 @@ fn get_input_type(path: &OsString) -> CatResult<InputType> {
 /// Writes handle to stdout with no configuration. This allows a
 /// simple memory copy.
 fn write_fast<R: FdReadable>(handle: &mut InputHandle<R>) -> CatResult<()> {
-    let stdout = io::stdout();
+    let stdout = stdout();
     let mut stdout_lock = stdout.lock();
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
@@ -520,7 +547,7 @@ fn write_lines<R: FdReadable>(
     state: &mut OutputState,
 ) -> CatResult<()> {
     let mut in_buf = [0; 1024 * 31];
-    let stdout = io::stdout();
+    let stdout = stdout();
     let stdout = stdout.lock();
     // Add a 32K buffer for stdout - this greatly improves performance.
     let mut writer = BufWriter::with_capacity(32 * 1024, stdout);

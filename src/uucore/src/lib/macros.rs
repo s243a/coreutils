@@ -92,7 +92,11 @@ macro_rules! show(
         let e = $err;
         $crate::error::set_exit_code(e.code());
         use std::io::Write as _;
-        let _ = writeln!(std::io::stderr().lock(), "{}: {e}", $crate::util_name());
+        #[cfg(target_family = "wasm")]
+        let mut error = $crate::wasm_io::stderr();
+        #[cfg(not(target_family = "wasm"))]
+        let mut error = std::io::stderr().lock();
+        let _ = writeln!(error, "{}: {e}", $crate::util_name());
     })
 );
 
@@ -153,6 +157,9 @@ macro_rules! show_if_err(
 macro_rules! show_error(
     ($($args:tt)+) => ({
 		use std::io::Write as _;
+		#[cfg(target_family = "wasm")]
+		let mut error = $crate::wasm_io::stderr();
+		#[cfg(not(target_family = "wasm"))]
 		let mut error = std::io::stderr().lock();
         let _ = write!(error, "{}: ", $crate::util_name());
         let _ = writeln!(error, $($args)+);
@@ -178,6 +185,9 @@ macro_rules! show_error(
 macro_rules! show_warning(
     ($($args:tt)+) => ({
 		use std::io::Write as _;
+		#[cfg(target_family = "wasm")]
+		let mut error = $crate::wasm_io::stderr();
+		#[cfg(not(target_family = "wasm"))]
 		let mut error = std::io::stderr().lock();
         let _ = write!(error, "{}: warning: ", $crate::util_name());
         let _ = writeln!(error, $($args)+);
@@ -189,6 +199,9 @@ macro_rules! show_warning(
 macro_rules! show_warning_caps(
     ($($args:tt)+) => ({
 		use std::io::Write as _;
+		#[cfg(target_family = "wasm")]
+		let mut error = $crate::wasm_io::stderr();
+		#[cfg(not(target_family = "wasm"))]
 		let mut error = std::io::stderr().lock();
         let _ = write!(error, "{}: WARNING: ", $crate::util_name());
         let _ = writeln!(error, $($args)+);

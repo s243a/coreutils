@@ -16,10 +16,35 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{self, Write, stderr},
+    io::{self, Write},
     iter,
     path::{Path, PathBuf},
 };
+
+#[cfg(not(target_family = "wasm"))]
+use std::io::stderr;
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::stderr;
+
+#[cfg(target_family = "wasm")]
+fn stdout() -> uucore::wasm_io::WasmStdout {
+    uucore::wasm_io::stdout()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn stdout() -> std::io::Stdout {
+    std::io::stdout()
+}
+
+#[cfg(target_family = "wasm")]
+fn wc_stdin() -> uucore::wasm_io::WasmStdin {
+    uucore::wasm_io::stdin()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn wc_stdin() -> std::io::Stdin {
+    std::io::stdin()
+}
 
 use clap::{Arg, ArgAction, ArgMatches, Command, builder::ValueParser};
 use thiserror::Error;
@@ -694,11 +719,21 @@ enum CountResult {
 /// return an error: ([`WordCount`], `Option<io::Error>`).
 fn word_count_from_input(input: &Input<'_>, settings: &Settings) -> CountResult {
     let (total, maybe_err) = match input {
-        Input::Stdin(_) => word_count_from_reader(io::stdin().lock(), settings),
-        Input::Path(path) => match File::open(path) {
-            Ok(f) => word_count_from_reader(f, settings),
-            Err(err) => return CountResult::Failure(err),
-        },
+        Input::Stdin(_) => word_count_from_reader(wc_stdin().lock(), settings),
+        Input::Path(path) => {
+            #[cfg(target_family = "wasm")]
+            {
+                match uucore::wasm_io::open_file(path) {
+                    Ok(reader) => word_count_from_reader(countable::VfsReader(reader), settings),
+                    Err(err) => return CountResult::Failure(err),
+                }
+            }
+            #[cfg(not(target_family = "wasm"))]
+            match File::open(path) {
+                Ok(f) => word_count_from_reader(f, settings),
+                Err(err) => return CountResult::Failure(err),
+            }
+        }
     };
     match maybe_err {
         None => CountResult::Success(total),
@@ -767,14 +802,19 @@ type InputIterItem<'a> = Result<Input<'a>, Box<dyn UError>>;
 /// To be used with `--files0-from=-`, this applies a filter on the results of [`files0_iter`] to
 /// translate '-' into the appropriate error.
 fn files0_iter_stdin<'a>() -> impl Iterator<Item = InputIterItem<'a>> {
-    files0_iter(io::stdin().lock(), STDIN_REPR.into()).map(|i| match i {
+    files0_iter(wc_stdin().lock(), STDIN_REPR.into()).map(|i| match i {
         Ok(Input::Stdin(_)) => Err(WcError::StdinReprNotAllowed.into()),
         _ => i,
     })
 }
 
 fn files0_iter_file<'a>(path: &Path) -> UResult<impl Iterator<Item = InputIterItem<'a>>> {
-    match File::open(path) {
+    #[cfg(target_family = "wasm")]
+    let open_result = uucore::wasm_io::open_file(path);
+    #[cfg(not(target_family = "wasm"))]
+    let open_result = File::open(path).map(|f| Box::new(f) as Box<dyn io::Read>);
+
+    match open_result {
         Ok(f) => Ok(files0_iter(f, path.into())),
         Err(e) => Err(e.map_err_context(|| {
             translate!("wc-error-cannot-open-for-reading",
@@ -992,7 +1032,7 @@ fn wc(inputs: &Inputs, settings: &Settings) -> UResult<()> {
         }
         // Print deferred error after stats to match GNU wc output order
         if let Some(err) = deferred_error {
-            let _ = io::stdout().flush();
+            let _ = stdout().flush();
             show!(err);
         }
     }
@@ -1016,7 +1056,7 @@ fn print_stats(
     title: Option<&OsStr>,
     number_width: usize,
 ) -> io::Result<()> {
-    let mut stdout = io::stdout().lock();
+    let mut stdout = stdout().lock();
 
     let maybe_cols = [
         (settings.show_lines, result.lines),

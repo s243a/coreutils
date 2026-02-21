@@ -38,6 +38,18 @@ impl WordCountable for StdinLock<'_> {
     }
 }
 
+#[cfg(target_family = "wasm")]
+impl WordCountable for uucore::wasm_io::WasmStdinLock {
+    type Buffered = Self;
+
+    fn buffered(self) -> Self::Buffered {
+        self
+    }
+    fn inner_file(&mut self) -> Option<&mut File> {
+        None
+    }
+}
+
 impl WordCountable for File {
     type Buffered = BufReader<Self>;
 
@@ -47,5 +59,29 @@ impl WordCountable for File {
 
     fn inner_file(&mut self) -> Option<&mut File> {
         Some(self)
+    }
+}
+
+/// VFS-backed reader for WASM. Wraps `Box<dyn Read>` from the VFS file hooks.
+#[cfg(target_family = "wasm")]
+pub struct VfsReader(pub Box<dyn Read>);
+
+#[cfg(target_family = "wasm")]
+impl Read for VfsReader {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+#[cfg(target_family = "wasm")]
+impl WordCountable for VfsReader {
+    type Buffered = BufReader<Self>;
+
+    fn buffered(self) -> Self::Buffered {
+        BufReader::new(self)
+    }
+
+    fn inner_file(&mut self) -> Option<&mut File> {
+        None
     }
 }

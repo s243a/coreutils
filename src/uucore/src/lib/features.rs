@@ -61,6 +61,10 @@ pub mod version_cmp;
 #[cfg(all(not(windows), feature = "mode"))]
 pub mod mode;
 
+// ** wasm-only
+#[cfg(target_family = "wasm")]
+pub mod wasm_io;
+
 // ** unix-only
 #[cfg(all(unix, feature = "entries"))]
 pub mod entries;

@@ -14,9 +14,13 @@ use operation::{
 };
 use simd::process_input;
 use std::ffi::OsString;
+#[cfg(not(target_family = "wasm"))]
 use std::io::{stdin, stdout};
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::{stdin, stdout};
 use uucore::display::Quotable;
 use uucore::error::{UResult, USimpleError, UUsageError};
+#[cfg(not(target_family = "wasm"))]
 use uucore::fs::is_stdin_directory;
 use uucore::translate;
 use uucore::{format_usage, os_str_as_bytes, show};
@@ -112,6 +116,7 @@ pub fn uumain(args: impl uucore::Args) -> UResult<()> {
         translating,
     )?;
 
+    #[cfg(not(target_family = "wasm"))]
     if is_stdin_directory(&stdin) {
         return Err(USimpleError::new(1, translate!("tr-error-read-directory")));
     }

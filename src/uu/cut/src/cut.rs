@@ -9,7 +9,11 @@ use bstr::io::BufReadExt;
 use clap::{Arg, ArgAction, ArgMatches, Command, builder::ValueParser};
 use std::ffi::OsString;
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, IsTerminal, Read, Write, stdin, stdout};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+#[cfg(not(target_family = "wasm"))]
+use std::io::{IsTerminal, stdin, stdout};
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::{stdin, stdout};
 use std::path::Path;
 use uucore::display::Quotable;
 use uucore::error::{FromIo, UResult, USimpleError, set_exit_code};

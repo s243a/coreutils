@@ -15,6 +15,26 @@ use std::num::TryFromIntError;
 use std::os::fd::AsFd;
 use std::path::PathBuf;
 use thiserror::Error;
+
+#[cfg(target_family = "wasm")]
+fn stdout() -> uucore::wasm_io::WasmStdout {
+    uucore::wasm_io::stdout()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn stdout() -> std::io::Stdout {
+    std::io::stdout()
+}
+
+#[cfg(target_family = "wasm")]
+fn stdin() -> uucore::wasm_io::WasmStdin {
+    uucore::wasm_io::stdin()
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn stdin() -> std::io::Stdin {
+    std::io::stdin()
+}
 use uucore::display::{Quotable, print_verbatim};
 use uucore::error::{FromIo, UError, UResult};
 use uucore::line_ending::LineEnding;
@@ -242,7 +262,7 @@ fn read_n_bytes(input: impl Read, n: u64) -> io::Result<u64> {
     let mut reader = input.take(n);
 
     // Write those bytes to `stdout`.
-    let stdout = io::stdout();
+    let stdout = stdout();
     let mut stdout = stdout.lock();
 
     let bytes_written = io::copy(&mut reader, &mut stdout).map_err(wrap_in_stdout_error)?;
@@ -260,7 +280,7 @@ fn read_n_lines(input: &mut impl io::BufRead, n: u64, separator: u8) -> io::Resu
     let mut reader = take_lines(input, n, separator);
 
     // Write those bytes to `stdout`.
-    let stdout = io::stdout();
+    let stdout = stdout();
     let stdout = stdout.lock();
     let mut writer = BufWriter::with_capacity(BUF_SIZE, stdout);
 
@@ -281,7 +301,7 @@ fn catch_too_large_numbers_in_backwards_bytes_or_lines(n: u64) -> Option<usize> 
 fn read_but_last_n_bytes(mut input: impl Read, n: u64) -> io::Result<u64> {
     let mut bytes_written: u64 = 0;
     if let Some(n) = catch_too_large_numbers_in_backwards_bytes_or_lines(n) {
-        let stdout = io::stdout();
+        let stdout = stdout();
         let mut stdout = stdout.lock();
 
         bytes_written = copy_all_but_n_bytes(&mut input, &mut stdout, n)
@@ -298,7 +318,7 @@ fn read_but_last_n_bytes(mut input: impl Read, n: u64) -> io::Result<u64> {
 }
 
 fn read_but_last_n_lines(mut input: impl Read, n: u64, separator: u8) -> io::Result<u64> {
-    let stdout = io::stdout();
+    let stdout = stdout();
     let mut stdout = stdout.lock();
     if n == 0 {
         return io::copy(&mut input, &mut stdout).map_err(wrap_in_stdout_error);
@@ -475,7 +495,7 @@ fn uu_head(options: &HeadOptions) -> UResult<()> {
                 }
                 println!("{}", translate!("head-header-stdin"));
             }
-            let stdin = io::stdin();
+            let stdin = stdin();
 
             #[cfg(unix)]
             {
@@ -510,25 +530,63 @@ fn uu_head(options: &HeadOptions) -> UResult<()> {
 
             Ok(())
         } else {
-            let mut file_handle = match File::open(file) {
-                Ok(f) => f,
-                Err(err) => {
-                    show!(err.map_err_context(
-                        || translate!("head-error-cannot-open", "name" => file.quote())
-                    ));
-                    continue;
+            // On WASM, use VFS file hooks since std::fs::File::open returns errors.
+            // VFS files are non-seekable, so use the streaming read path directly.
+            #[cfg(target_family = "wasm")]
+            {
+                let reader = match uucore::wasm_io::open_file(file) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        show!(err.map_err_context(
+                            || translate!("head-error-cannot-open", "name" => file.quote())
+                        ));
+                        continue;
+                    }
+                };
+                if (options.files.len() > 1 && !options.quiet) || options.verbose {
+                    if !first {
+                        println!();
+                    }
+                    print!("==> ");
+                    print_verbatim(file).unwrap();
+                    println!(" <==");
                 }
-            };
-            if (options.files.len() > 1 && !options.quiet) || options.verbose {
-                if !first {
-                    println!();
-                }
-                print!("==> ");
-                print_verbatim(file).unwrap();
-                println!(" <==");
+                let mut buf_reader = io::BufReader::with_capacity(BUF_SIZE, reader);
+                match options.mode {
+                    Mode::FirstBytes(n) => read_n_bytes(&mut buf_reader, n),
+                    Mode::FirstLines(n) => {
+                        read_n_lines(&mut buf_reader, n, options.line_ending.into())
+                    }
+                    Mode::AllButLastBytes(n) => read_but_last_n_bytes(&mut buf_reader, n),
+                    Mode::AllButLastLines(n) => {
+                        read_but_last_n_lines(&mut buf_reader, n, options.line_ending.into())
+                    }
+                }?;
+                Ok(())
             }
-            head_file(&mut file_handle, options)?;
-            Ok(())
+
+            #[cfg(not(target_family = "wasm"))]
+            {
+                let mut file_handle = match File::open(file) {
+                    Ok(f) => f,
+                    Err(err) => {
+                        show!(err.map_err_context(
+                            || translate!("head-error-cannot-open", "name" => file.quote())
+                        ));
+                        continue;
+                    }
+                };
+                if (options.files.len() > 1 && !options.quiet) || options.verbose {
+                    if !first {
+                        println!();
+                    }
+                    print!("==> ");
+                    print_verbatim(file).unwrap();
+                    println!(" <==");
+                }
+                head_file(&mut file_handle, options)?;
+                Ok(())
+            }
         };
         if let Err(err) = res {
             let name = if file == "-" {

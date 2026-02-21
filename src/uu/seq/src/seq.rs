@@ -4,7 +4,11 @@
 // file that was distributed with this source code.
 // spell-checker:ignore (ToDO) bigdecimal extendedbigdecimal numberparse hexadecimalfloat biguint
 use std::ffi::{OsStr, OsString};
-use std::io::{BufWriter, Write, stdout};
+use std::io::{BufWriter, Write};
+#[cfg(not(target_family = "wasm"))]
+use std::io::stdout;
+#[cfg(target_family = "wasm")]
+use uucore::wasm_io::stdout;
 
 use clap::{Arg, ArgAction, Command};
 use num_bigint::BigUint;
